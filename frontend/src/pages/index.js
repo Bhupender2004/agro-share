@@ -1,0 +1,10 @@
+export { default as Home } from './Home';
+export { default as Login } from './Login';
+export { default as Register } from './Register';
+export { default as Machines } from './Machines';
+export { default as MachineDetails } from './MachineDetails';
+export { default as AddMachine } from './AddMachine';
+export { default as Bookings } from './Bookings';
+export { default as CreateBooking } from './CreateBooking';
+export { default as Dashboard } from './Dashboard';
+export { default as Schedule } from './Schedule';
