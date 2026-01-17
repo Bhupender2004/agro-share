@@ -13,13 +13,11 @@ const dotenv = require('dotenv');
 // Load environment variables
 dotenv.config();
 
-// Import routes
-const userRoutes = require('./routes/userRoutes');
-const machineRoutes = require('./routes/machineRoutes');
-const bookingRoutes = require('./routes/bookingRoutes');
-
 // Initialize Express app
 const app = express();
+
+// Track if using mock data
+let useMockData = false;
 
 // ===========================================
 // Middleware Configuration
@@ -35,12 +33,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Request logging middleware (development)
-if (process.env.NODE_ENV === 'development') {
-    app.use((req, res, next) => {
-        console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-        next();
-    });
-}
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+    next();
+});
 
 // ===========================================
 // Database Connection
@@ -48,13 +44,16 @@ if (process.env.NODE_ENV === 'development') {
 
 const connectDB = async () => {
     try {
-        const conn = await mongoose.connect(process.env.MONGODB_URI, {
-            // Mongoose 6+ no longer needs these options, but included for compatibility
+        const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/agroshare';
+        const conn = await mongoose.connect(mongoUri, {
+            serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
         });
         console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+        return true;
     } catch (error) {
-        console.error(`❌ MongoDB Connection Error: ${error.message}`);
-        process.exit(1);
+        console.warn(`⚠️ MongoDB Connection Failed: ${error.message}`);
+        console.log('📦 Starting in DEMO MODE with in-memory data...');
+        return false;
     }
 };
 
@@ -70,14 +69,81 @@ app.get('/', (req, res) => {
         success: true,
         message: 'AgroShare API is running',
         version: '1.0.0',
+        mode: useMockData ? 'demo' : 'production',
         timestamp: new Date().toISOString()
     });
 });
 
-// Mount routes
-app.use(`${API_PREFIX}/users`, userRoutes);
-app.use(`${API_PREFIX}/machines`, machineRoutes);
-app.use(`${API_PREFIX}/bookings`, bookingRoutes);
+// Routes will be mounted after DB connection attempt
+// See startServer() function
+
+// ===========================================
+// Mock Routes Setup
+// ===========================================
+
+const setupMockRoutes = () => {
+    const express = require('express');
+    
+    // Mock User Routes
+    const userRouter = express.Router();
+    const mockUserController = require('./controllers/mock/userController');
+    userRouter.post('/register', mockUserController.registerUser);
+    userRouter.post('/login', mockUserController.loginUser);
+    userRouter.get('/', mockUserController.getAllUsers);
+    userRouter.get('/:id', mockUserController.getUserProfile);
+    userRouter.put('/:id', mockUserController.updateUserProfile);
+    userRouter.delete('/:id', mockUserController.deleteUser);
+    
+    // Mock Machine Routes
+    const machineRouter = express.Router();
+    const mockMachineController = require('./controllers/mock/machineController');
+    machineRouter.get('/types/all', mockMachineController.getMachineTypes);
+    machineRouter.get('/nearby', mockMachineController.getNearbyMachines);
+    machineRouter.get('/owner/:ownerId', mockMachineController.getMachinesByOwner);
+    machineRouter.get('/', mockMachineController.getAllMachines);
+    machineRouter.get('/:id', mockMachineController.getMachineById);
+    machineRouter.post('/', mockMachineController.addMachine);
+    machineRouter.put('/:id', mockMachineController.updateMachine);
+    machineRouter.patch('/:id/availability', mockMachineController.updateAvailability);
+    machineRouter.delete('/:id', mockMachineController.deleteMachine);
+    
+    // Mock Booking Routes
+    const bookingRouter = express.Router();
+    const mockBookingController = require('./controllers/mock/bookingController');
+    bookingRouter.get('/schedule/:date', mockBookingController.getScheduleByDate);
+    bookingRouter.post('/schedule/optimize', mockBookingController.getOptimizedSchedule);
+    bookingRouter.get('/farmer/:farmerId', mockBookingController.getBookingsByFarmer);
+    bookingRouter.get('/owner/:ownerId', mockBookingController.getBookingsByOwner);
+    bookingRouter.get('/machine/:machineId', mockBookingController.getBookingsByMachine);
+    bookingRouter.get('/', mockBookingController.getAllBookings);
+    bookingRouter.get('/:id', mockBookingController.getBookingById);
+    bookingRouter.post('/', mockBookingController.createBooking);
+    bookingRouter.patch('/:id/status', mockBookingController.updateBookingStatus);
+    bookingRouter.post('/:id/rating', mockBookingController.addRating);
+    bookingRouter.delete('/:id', mockBookingController.cancelBooking);
+    
+    app.use(`${API_PREFIX}/users`, userRouter);
+    app.use(`${API_PREFIX}/machines`, machineRouter);
+    app.use(`${API_PREFIX}/bookings`, bookingRouter);
+    
+    console.log('📦 Mock routes loaded successfully');
+};
+
+// ===========================================
+// Production Routes Setup
+// ===========================================
+
+const setupProductionRoutes = () => {
+    const userRoutes = require('./routes/userRoutes');
+    const machineRoutes = require('./routes/machineRoutes');
+    const bookingRoutes = require('./routes/bookingRoutes');
+    
+    app.use(`${API_PREFIX}/users`, userRoutes);
+    app.use(`${API_PREFIX}/machines`, machineRoutes);
+    app.use(`${API_PREFIX}/bookings`, bookingRoutes);
+    
+    console.log('🔌 Production routes loaded successfully');
+};
 
 // ===========================================
 // Error Handling Middleware
@@ -136,13 +202,21 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
-    // Connect to database
-    await connectDB();
+    // Try to connect to database
+    const dbConnected = await connectDB();
+    
+    // Setup routes based on DB connection
+    if (dbConnected) {
+        setupProductionRoutes();
+    } else {
+        useMockData = true;
+        setupMockRoutes();
+    }
     
     // Start listening for requests
     app.listen(PORT, () => {
         console.log(`🚀 AgroShare Server running on port ${PORT}`);
-        console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`📍 Mode: ${useMockData ? 'DEMO (in-memory data)' : 'PRODUCTION (MongoDB)'}`);
         console.log(`📍 API Base: http://localhost:${PORT}${API_PREFIX}`);
     });
 };
@@ -150,7 +224,6 @@ const startServer = async () => {
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
     console.error('Unhandled Rejection:', err.message);
-    process.exit(1);
 });
 
 // Start the server
